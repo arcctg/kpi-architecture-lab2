@@ -114,16 +114,16 @@ curl -X POST http://localhost:8080/api/decks/1/cards \
   -d '{"term":"JVM","definition":"Java Virtual Machine"}'
 ```
 
-## Project Structure
+## Project Structure (4-Layered Architecture)
+
+The project follows Domain-Driven Design principles, structured into 4 strict layers:
 
 ```
 src/main/java/com/flashcard/
-├── config/          # Security configuration
-├── controller/      # REST controllers
-├── dto/             # Request/response DTOs
-├── entity/          # JPA entities
-├── exception/       # Exception handling
-├── repository/      # Spring Data repositories
-├── security/        # JWT authentication
-└── service/         # Business logic
+├── domain/          # Pure business logic
+├── application/     # Use Cases and Application Ports
+├── infrastructure/  # DB Adapters, JPA Entities, Mappers, Security config
+└── presentation/    # REST Controllers, DTOs, Exception Handling
 ```
+
+For more details on the architecture, see [docs/analysis/lab2.md](docs/analysis/lab2.md).
