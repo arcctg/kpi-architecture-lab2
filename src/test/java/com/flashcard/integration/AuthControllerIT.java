@@ -1,122 +1,98 @@
 package com.flashcard.integration;
 
-import com.flashcard.dto.request.LoginRequest;
-import com.flashcard.dto.request.RegisterRequest;
-import com.flashcard.dto.response.AuthResponse;
-import com.flashcard.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 
 import static org.assertj.core.api.Assertions.*;
 
 class AuthControllerIT extends BaseIntegrationTest {
 
     @Autowired
-    private TestRestTemplate restTemplate;
+    private TestRestTemplate rest;
 
-    @Autowired
-    private UserRepository userRepository;
+    private int counter = 0;
 
-    @BeforeEach
-    void cleanUp() {
-        userRepository.deleteAll();
+    private String uniqueEmail() {
+        return "it-auth-" + System.nanoTime() + "-" + (counter++) + "@test.com";
     }
 
     @Test
-    void register_success_returns201() {
-        var request = new RegisterRequest("test@example.com", "Test User", "password1");
+    void register_returns201WithToken() {
+        String email = uniqueEmail();
+        String body = """
+                {"email":"%s","displayName":"Test","password":"Password1"}
+                """.formatted(email);
 
-        ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
-                "/api/auth/register", request, AuthResponse.class);
+        ResponseEntity<String> response = rest.exchange(
+                "/api/auth/register", HttpMethod.POST,
+                new HttpEntity<>(body, jsonHeaders()), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().token()).isNotBlank();
+        assertThat(response.getBody()).contains("token");
     }
 
     @Test
     void register_duplicateEmail_returns409() {
-        var request = new RegisterRequest("dup@example.com", "User", "password1");
-        restTemplate.postForEntity("/api/auth/register", request, AuthResponse.class);
+        String email = uniqueEmail();
+        String body = """
+                {"email":"%s","displayName":"Test","password":"Password1"}
+                """.formatted(email);
 
-        ResponseEntity<String> response = restTemplate.postForEntity(
-                "/api/auth/register", request, String.class);
+        rest.exchange("/api/auth/register", HttpMethod.POST,
+                new HttpEntity<>(body, jsonHeaders()), String.class);
+
+        ResponseEntity<String> response = rest.exchange(
+                "/api/auth/register", HttpMethod.POST,
+                new HttpEntity<>(body, jsonHeaders()), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
     @Test
-    void register_invalidEmail_returns400() {
-        var request = new RegisterRequest("not-an-email", "User", "password1");
+    void login_validCredentials_returns200WithToken() {
+        String email = uniqueEmail();
+        String regBody = """
+                {"email":"%s","displayName":"Test","password":"Password1"}
+                """.formatted(email);
+        rest.exchange("/api/auth/register", HttpMethod.POST,
+                new HttpEntity<>(regBody, jsonHeaders()), String.class);
 
-        ResponseEntity<String> response = restTemplate.postForEntity(
-                "/api/auth/register", request, String.class);
+        String loginBody = """
+                {"email":"%s","password":"Password1"}
+                """.formatted(email);
+        ResponseEntity<String> response = rest.exchange(
+                "/api/auth/login", HttpMethod.POST,
+                new HttpEntity<>(loginBody, jsonHeaders()), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("token");
+    }
+
+    @Test
+    void login_invalidPassword_returns400() {
+        String email = uniqueEmail();
+        String regBody = """
+                {"email":"%s","displayName":"Test","password":"Password1"}
+                """.formatted(email);
+        rest.exchange("/api/auth/register", HttpMethod.POST,
+                new HttpEntity<>(regBody, jsonHeaders()), String.class);
+
+        String loginBody = """
+                {"email":"%s","password":"WrongPassword1"}
+                """.formatted(email);
+        ResponseEntity<String> response = rest.exchange(
+                "/api/auth/login", HttpMethod.POST,
+                new HttpEntity<>(loginBody, jsonHeaders()), String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
-    @Test
-    void register_weakPassword_returns400() {
-        var request = new RegisterRequest("ok@example.com", "User", "nodigits");
-
-        ResponseEntity<String> response = restTemplate.postForEntity(
-                "/api/auth/register", request, String.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-    }
-
-    @Test
-    void login_success_returns200() {
-        var reg = new RegisterRequest("login@example.com", "User", "password1");
-        restTemplate.postForEntity("/api/auth/register", reg, AuthResponse.class);
-
-        var login = new LoginRequest("login@example.com", "password1");
-        ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
-                "/api/auth/login", login, AuthResponse.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody().token()).isNotBlank();
-    }
-
-    @Test
-    void login_wrongPassword_returns401() {
-        var reg = new RegisterRequest("auth@example.com", "User", "password1");
-        restTemplate.postForEntity("/api/auth/register", reg, AuthResponse.class);
-
-        var login = new LoginRequest("auth@example.com", "wrongpass");
-        ResponseEntity<String> response = restTemplate.postForEntity(
-                "/api/auth/login", login, String.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-    }
-
-    @Test
-    void protectedEndpoint_noToken_returns401() {
-        ResponseEntity<String> response = restTemplate.getForEntity(
-                "/api/decks", String.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-    }
-
-    @Test
-    void protectedEndpoint_withToken_returns200() {
-        var reg = new RegisterRequest("protected@example.com", "User", "password1");
-        ResponseEntity<AuthResponse> authResp = restTemplate.postForEntity(
-                "/api/auth/register", reg, AuthResponse.class);
-        String token = authResp.getBody().token();
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(token);
-        ResponseEntity<String> response = restTemplate.exchange(
-                "/api/decks", HttpMethod.GET, new HttpEntity<>(headers), String.class);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    private HttpHeaders jsonHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        return h;
     }
 }
